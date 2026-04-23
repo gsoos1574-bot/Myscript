@@ -1,235 +1,307 @@
--- ============================================
---        UNIVERSAL FLY SCRIPT
--- ============================================
+-- Rivals Aimbot Script | Delta X
+-- GUI Button + Circle Reticle + Aimbot
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
 
-local player = Players.LocalPlayer
-local camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
 
-local FLY_SPEED = 60
-local flyEnabled = false
-local flyConnection = nil
-local bodyVelocity = nil
-local bodyGyro = nil
+-- ═══════════════════════════════
+--         НАСТРОЙКИ
+-- ═══════════════════════════════
+local Settings = {
+    AimbotEnabled = false,
+    FOVRadius = 120,          -- Радиус круга прицела (px)
+    AimSmoothing = 0.25,      -- Плавность (0.1 = быстро, 0.5 = медленно)
+    AimPart = "Head",         -- Часть тела ("Head" / "HumanoidRootPart")
+    TeamCheck = true,         -- Не стрелять по союзникам
+    WallCheck = true,         -- Проверка стен
+    CircleColor = Color3.fromRGB(255, 60, 60),
+    CircleThickness = 2,
+}
 
--- ============================================
--- GUI
--- ============================================
+-- ═══════════════════════════════
+--         DRAWING - КРУГ
+-- ═══════════════════════════════
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Visible = false
+FOVCircle.Thickness = Settings.CircleThickness
+FOVCircle.Color = Settings.CircleColor
+FOVCircle.Radius = Settings.FOVRadius
+FOVCircle.Filled = false
+FOVCircle.Transparency = 1
+FOVCircle.NumSides = 64
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FlyGui"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.Parent = player.PlayerGui
+-- Точка в центре прицела
+local CenterDot = Drawing.new("Circle")
+CenterDot.Visible = false
+CenterDot.Thickness = 1
+CenterDot.Color = Color3.fromRGB(255, 255, 255)
+CenterDot.Radius = 3
+CenterDot.Filled = true
+CenterDot.Transparency = 1
+CenterDot.NumSides = 16
 
--- Кнопка Frame
-local buttonFrame = Instance.new("Frame")
-buttonFrame.Size = UDim2.new(0, 130, 0, 55)
-buttonFrame.Position = UDim2.new(0.5, -65, 0.85, 0)
-buttonFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-buttonFrame.BackgroundTransparency = 0.2
-buttonFrame.BorderSizePixel = 0
-buttonFrame.Parent = screenGui
+-- Крестик (линии)
+local LineH = Drawing.new("Line")
+LineH.Visible = false
+LineH.Color = Color3.fromRGB(255, 60, 60)
+LineH.Thickness = 1.5
+LineH.Transparency = 1
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 14)
-corner.Parent = buttonFrame
+local LineV = Drawing.new("Line")
+LineV.Visible = false
+LineV.Color = Color3.fromRGB(255, 60, 60)
+LineV.Thickness = 1.5
+LineV.Transparency = 1
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(255, 70, 70)
-stroke.Thickness = 2.5
-stroke.Parent = buttonFrame
+-- ═══════════════════════════════
+--         ПЛАВАЮЩАЯ GUI КНОПКА
+-- ═══════════════════════════════
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AimbotGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
--- Кнопка текст
-local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(1, 0, 1, 0)
-toggleButton.BackgroundTransparency = 1
-toggleButton.Text = "✈  FLY: OFF"
-toggleButton.TextColor3 = Color3.fromRGB(255, 70, 70)
-toggleButton.TextSize = 17
-toggleButton.Font = Enum.Font.GothamBold
-toggleButton.Parent = buttonFrame
-
--- ============================================
--- ПЕРЕТАСКИВАНИЕ КНОПКИ
--- ============================================
-
-local dragging = false
-local dragStart = nil
-local startPos = nil
-
-buttonFrame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = buttonFrame.Position
-    end
+-- Используем защищённый способ добавления GUI
+local success = pcall(function()
+    ScreenGui.Parent = game:GetService("CoreGui")
 end)
-
-buttonFrame.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-    or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and (
-        input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch
-    ) then
-        local delta = input.Position - dragStart
-        buttonFrame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
--- ============================================
--- ПОЛЁТ
--- ============================================
-
-local function enableFly()
-    local character = player.Character
-    if not character then return end
-
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not rootPart or not humanoid then return end
-
-    -- Замораживаем анимацию персонажа
-    humanoid.PlatformStand = true
-
-    -- BodyVelocity — двигает персонажа
-    bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-    bodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    bodyVelocity.P = 1e4
-    bodyVelocity.Parent = rootPart
-
-    -- BodyGyro — поворачивает персонажа за камерой
-    bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-    bodyGyro.P = 1e4
-    bodyGyro.D = 150
-    bodyGyro.CFrame = rootPart.CFrame
-    bodyGyro.Parent = rootPart
-
-    -- Каждый кадр обновляем полёт
-    flyConnection = RunService.Heartbeat:Connect(function()
-        if not flyEnabled then return end
-
-        local char = player.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChild("Humanoid")
-        if not root or not hum then return end
-
-        local camCF = camera.CFrame
-        local moveDir = Vector3.new(0, 0, 0)
-
-        -- ПК управление (WASD + Space + Shift)
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            moveDir = moveDir + camCF.LookVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            moveDir = moveDir - camCF.LookVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            moveDir = moveDir - camCF.RightVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            moveDir = moveDir + camCF.RightVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-            moveDir = moveDir + Vector3.new(0, 1, 0)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-            moveDir = moveDir - Vector3.new(0, 1, 0)
-        end
-
-        -- Мобильный джойстик (MoveDirection автоматически читает джойстик)
-        local mobileDir = hum.MoveDirection
-        if mobileDir.Magnitude > 0.1 then
-            local flatLook = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z).Unit
-            local flatRight = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z).Unit
-            moveDir = moveDir + (flatLook * -mobileDir.Z + flatRight * mobileDir.X)
-        end
-
-        -- Применяем скорость
-        if moveDir.Magnitude > 0 then
-            bodyVelocity.Velocity = moveDir.Unit * FLY_SPEED
-        else
-            bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        end
-
-        -- Поворачиваем персонажа за камерой
-        bodyGyro.CFrame = CFrame.new(root.Position, root.Position + camCF.LookVector)
-    end)
+if not success then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
 
-local function disableFly()
-    if flyConnection then
-        flyConnection:Disconnect()
-        flyConnection = nil
-    end
-    if bodyVelocity then
-        bodyVelocity:Destroy()
-        bodyVelocity = nil
-    end
-    if bodyGyro then
-        bodyGyro:Destroy()
-        bodyGyro = nil
-    end
+-- Фрейм кнопки (перетаскиваемый)
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 120, 0, 40)
+Frame.Position = UDim2.new(0, 20, 0.5, -20)
+Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+Frame.BorderSizePixel = 0
+Frame.Active = true
+Frame.Draggable = true
+Frame.Parent = ScreenGui
 
-    local character = player.Character
-    if character then
-        local humanoid = character:FindFirstChild("Humanoid")
-        if humanoid then
-            humanoid.PlatformStand = false
-        end
-    end
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = Frame
+
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(255, 60, 60)
+UIStroke.Thickness = 1.5
+UIStroke.Parent = Frame
+
+-- Кнопка Toggle
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = "🎯 AIM: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+ToggleBtn.TextScaled = true
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Parent = Frame
+
+local UICorner2 = Instance.new("UICorner")
+UICorner2.CornerRadius = UDim.new(0, 8)
+UICorner2.Parent = ToggleBtn
+
+-- ═══════════════════════════════
+--         ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+-- ═══════════════════════════════
+
+-- Получить центр экрана
+local function GetScreenCenter()
+    local vp = Camera.ViewportSize
+    return Vector2.new(vp.X / 2, vp.Y / 2)
 end
 
--- ============================================
--- НАЖАТИЕ КНОПКИ
--- ============================================
+-- Проверка стен (raycast)
+local function IsVisible(target)
+    if not Settings.WallCheck then return true end
+    
+    local origin = Camera.CFrame.Position
+    local direction = (target - origin)
+    
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    
+    local result = workspace:Raycast(origin, direction, rayParams)
+    
+    if result then
+        local hitInstance = result.Instance
+        -- Проверяем попал ли луч в персонажа врага
+        local hitCharacter = hitInstance:FindFirstAncestorOfClass("Model")
+        if hitCharacter then
+            local hitPlayer = Players:GetPlayerFromCharacter(hitCharacter)
+            if hitPlayer then
+                return true -- Луч попал в игрока = виден
+            end
+        end
+        return false -- Попал в стену
+    end
+    return true
+end
 
-toggleButton.MouseButton1Click:Connect(function()
-    -- Проверяем — не перетаскиваем ли кнопку
-    if dragging then return end
+-- Проверка команды
+local function IsEnemy(player)
+    if not Settings.TeamCheck then return true end
+    if player.Team == nil or LocalPlayer.Team == nil then return true end
+    return player.Team ~= LocalPlayer.Team
+end
 
-    flyEnabled = not flyEnabled
+-- Получить ближайшего врага к центру экрана
+local function GetClosestEnemy()
+    local closestPlayer = nil
+    local closestDistance = Settings.FOVRadius
+    local screenCenter = GetScreenCenter()
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        -- Пропускаем себя
+        if player == LocalPlayer then continue end
+        
+        -- Проверка команды
+        if not IsEnemy(player) then continue end
+        
+        local character = player.Character
+        if not character then continue end
+        
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then continue end
+        
+        local targetPart = character:FindFirstChild(Settings.AimPart)
+        if not targetPart then continue end
+        
+        -- Переводим 3D позицию в 2D экранные координаты
+        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+        
+        if onScreen then
+            local screenVec2 = Vector2.new(screenPos.X, screenPos.Y)
+            local distance = (screenVec2 - screenCenter).Magnitude
+            
+            if distance < closestDistance then
+                -- Проверка видимости
+                if IsVisible(targetPart.Position) then
+                    closestDistance = distance
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+    
+    return closestPlayer
+end
 
-    if flyEnabled then
-        toggleButton.Text = "✈  FLY: ON"
-        toggleButton.TextColor3 = Color3.fromRGB(80, 255, 120)
-        stroke.Color = Color3.fromRGB(80, 255, 120)
-        buttonFrame.BackgroundColor3 = Color3.fromRGB(15, 40, 20)
-        enableFly()
+-- ═══════════════════════════════
+--         AIMBOT ЛОГИКА
+-- ═══════════════════════════════
+local function AimAt(targetPart)
+    if not targetPart then return end
+    
+    local targetPos = targetPart.Position
+    
+    -- Предсказание движения (упреждение)
+    local targetVelocity = Vector3.zero
+    local rootPart = targetPart.Parent:FindFirstChild("HumanoidRootPart")
+    if rootPart then
+        targetVelocity = rootPart.AssemblyLinearVelocity
+    end
+    
+    -- Простое упреждение
+    local distance = (Camera.CFrame.Position - targetPos).Magnitude
+    local bulletSpeed = 500 -- примерная скорость пули в Rivals
+    local timeToHit = distance / bulletSpeed
+    targetPos = targetPos + (targetVelocity * timeToHit)
+    
+    -- Плавное наведение через CFrame
+    local targetCFrame = CFrame.new(Camera.CFrame.Position, targetPos)
+    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Settings.AimSmoothing)
+end
+
+-- ═══════════════════════════════
+--         TOGGLE КНОПКА
+-- ═══════════════════════════════
+ToggleBtn.MouseButton1Click:Connect(function()
+    Settings.AimbotEnabled = not Settings.AimbotEnabled
+    
+    if Settings.AimbotEnabled then
+        ToggleBtn.Text = "🎯 AIM: ON"
+        ToggleBtn.TextColor3 = Color3.fromRGB(60, 255, 100)
+        UIStroke.Color = Color3.fromRGB(60, 255, 100)
+        FOVCircle.Visible = true
+        CenterDot.Visible = true
+        LineH.Visible = true
+        LineV.Visible = true
+        
+        -- Анимация кнопки
+        Frame.BackgroundColor3 = Color3.fromRGB(15, 35, 15)
     else
-        toggleButton.Text = "✈  FLY: OFF"
-        toggleButton.TextColor3 = Color3.fromRGB(255, 70, 70)
-        stroke.Color = Color3.fromRGB(255, 70, 70)
-        buttonFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-        disableFly()
+        ToggleBtn.Text = "🎯 AIM: OFF"
+        ToggleBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+        UIStroke.Color = Color3.fromRGB(255, 60, 60)
+        FOVCircle.Visible = false
+        CenterDot.Visible = false
+        LineH.Visible = false
+        LineV.Visible = false
+        
+        Frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     end
 end)
 
--- ============================================
--- ПЕРЕРОЖДЕНИЕ ПЕРСОНАЖА
--- ============================================
-
-player.CharacterAdded:Connect(function(char)
-    if flyEnabled then
-        task.wait(1)
-        enableFly()
+-- ═══════════════════════════════
+--         ГЛАВНЫЙ ЦИКЛ
+-- ═══════════════════════════════
+RunService.RenderStepped:Connect(function()
+    local center = GetScreenCenter()
+    
+    -- Обновляем позицию круга и крестика
+    FOVCircle.Position = center
+    CenterDot.Position = center
+    
+    -- Крестик
+    local crossSize = 10
+    LineH.From = Vector2.new(center.X - crossSize, center.Y)
+    LineH.To = Vector2.new(center.X + crossSize, center.Y)
+    LineV.From = Vector2.new(center.X, center.Y - crossSize)
+    LineV.To = Vector2.new(center.X, center.Y + crossSize)
+    
+    if not Settings.AimbotEnabled then return end
+    
+    -- Проверяем нажатие ПКМ (прицеливание) или просто автоаим
+    -- Держи ПКМ для активации аима
+    local isAiming = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    -- или можно убрать условие для постоянного аима
+    
+    if isAiming then
+        local closestEnemy = GetClosestEnemy()
+        
+        if closestEnemy then
+            local character = closestEnemy.Character
+            if character then
+                local targetPart = character:FindFirstChild(Settings.AimPart)
+                if targetPart then
+                    -- Подсвечиваем круг когда цель найдена
+                    FOVCircle.Color = Color3.fromRGB(60, 255, 100)
+                    AimAt(targetPart)
+                end
+            end
+        else
+            -- Нет цели в круге
+            FOVCircle.Color = Settings.CircleColor
+        end
+    else
+        FOVCircle.Color = Settings.CircleColor
     end
 end)
+
+-- ═══════════════════════════════
+--         ОЧИСТКА ПРИ ВЫХОДЕ
+-- ═══════════════════════════════
+game:GetService("Players").LocalPlayer.CharacterRemoving:Connect(function()
+    -- Не отключаем при респауне
+end)
+
+-- Выводим сообщение
+print("✅ Rivals Aimbot загружен! Нажми кнопку для включения. ПКМ = аим")
