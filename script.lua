@@ -1,77 +1,26 @@
--- Rivals Aimbot Script | Delta X | Fixed Version
--- ПКМ зажать = активировать аим когда включено
-
+-- Rivals Aimbot | Mobile Fix | Delta X
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local Camera = workspace.CurrentCamera
-
 local LocalPlayer = Players.LocalPlayer
 
 -- ═══════════════════════════════
 --         НАСТРОЙКИ
 -- ═══════════════════════════════
-local Settings = {
-    AimbotEnabled = false,
-    FOVRadius = 250,           -- БОЛЬШОЙ круг
-    AimSmoothing = 0.15,       -- Плавность наведения
-    AimPart = "Head",          -- Цель - голова
-    TeamCheck = false,         -- Выключено для теста
-    WallCheck = false,         -- Выключено для теста
-}
+local FOV_RADIUS = 300        -- Радиус зоны захвата (в пикселях)
+local SMOOTHING = 0.2         -- Плавность (0.1 быстро - 0.5 медленно)
+local AIM_PART = "Head"       -- Голова
+local AimbotEnabled = false
 
 -- ═══════════════════════════════
---         DRAWING КРУГ (большой, пустой)
--- ═══════════════════════════════
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = false
-FOVCircle.Thickness = 2
-FOVCircle.Color = Color3.fromRGB(255, 60, 60)
-FOVCircle.Radius = Settings.FOVRadius
-FOVCircle.Filled = false        -- ПУСТОЙ внутри
-FOVCircle.Transparency = 1
-FOVCircle.NumSides = 128        -- Очень плавный круг
-
--- Точка в центре
-local CenterDot = Drawing.new("Circle")
-CenterDot.Visible = false
-CenterDot.Thickness = 1
-CenterDot.Color = Color3.fromRGB(255, 255, 255)
-CenterDot.Radius = 3
-CenterDot.Filled = true
-CenterDot.Transparency = 1
-CenterDot.NumSides = 32
-
--- Крестик горизонталь
-local LineH = Drawing.new("Line")
-LineH.Visible = false
-LineH.Color = Color3.fromRGB(255, 255, 255)
-LineH.Thickness = 1
-LineH.Transparency = 1
-
--- Крестик вертикаль
-local LineV = Drawing.new("Line")
-LineV.Visible = false
-LineV.Color = Color3.fromRGB(255, 255, 255)
-LineV.Thickness = 1
-LineV.Transparency = 1
-
--- Текст дебага (чтоб видеть что происходит)
-local DebugText = Drawing.new("Text")
-DebugText.Visible = true
-DebugText.Size = 18
-DebugText.Color = Color3.fromRGB(0, 255, 100)
-DebugText.Outline = true
-DebugText.OutlineColor = Color3.fromRGB(0, 0, 0)
-DebugText.Position = Vector2.new(10, 150)
-DebugText.Text = "AIM: OFF"
-
--- ═══════════════════════════════
---         GUI КНОПКА
+--         GUI (вместо Drawing)
 -- ═══════════════════════════════
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AimbotGUI"
+ScreenGui.Name = "RivalsAim"
 ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder = 999
 
 local ok = pcall(function()
     ScreenGui.Parent = game:GetService("CoreGui")
@@ -80,179 +29,211 @@ if not ok then
     ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 130, 0, 45)
-Frame.Position = UDim2.new(0, 20, 0.5, -22)
-Frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-Frame.BorderSizePixel = 0
-Frame.Active = true
-Frame.Draggable = true
-Frame.Parent = ScreenGui
+-- ───────────────────────────────
+-- КРУГ через ImageLabel (чистый круг)
+-- ───────────────────────────────
+local CircleFrame = Instance.new("Frame")
+CircleFrame.Name = "FOVCircle"
+CircleFrame.Size = UDim2.new(0, FOV_RADIUS * 2, 0, FOV_RADIUS * 2)
+CircleFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+CircleFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+CircleFrame.BackgroundTransparency = 1
+CircleFrame.Visible = false
+CircleFrame.Parent = ScreenGui
 
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 10)
-UICorner.Parent = Frame
+-- Делаем круг через UICorner + рамку
+local CircleInner = Instance.new("Frame")
+CircleInner.Size = UDim2.new(1, 0, 1, 0)
+CircleInner.BackgroundTransparency = 1
+CircleInner.BorderSizePixel = 0
+CircleInner.Parent = CircleFrame
 
-local UIStroke = Instance.new("UIStroke")
-UIStroke.Color = Color3.fromRGB(255, 60, 60)
-UIStroke.Thickness = 2
-UIStroke.Parent = Frame
+local UIStrokeCircle = Instance.new("UIStroke")
+UIStrokeCircle.Color = Color3.fromRGB(255, 50, 50)
+UIStrokeCircle.Thickness = 3
+UIStrokeCircle.Parent = CircleInner
 
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
-ToggleBtn.BackgroundTransparency = 1
-ToggleBtn.Text = "🎯 AIM: OFF"
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-ToggleBtn.TextScaled = true
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.Parent = Frame
+local UICornerCircle = Instance.new("UICorner")
+UICornerCircle.CornerRadius = UDim.new(1, 0)  -- Делает квадрат кругом
+UICornerCircle.Parent = CircleInner
+
+-- ───────────────────────────────
+-- ТОЧКА В ЦЕНТРЕ
+-- ───────────────────────────────
+local DotFrame = Instance.new("Frame")
+DotFrame.Size = UDim2.new(0, 8, 0, 8)
+DotFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+DotFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+DotFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+DotFrame.BorderSizePixel = 0
+DotFrame.Visible = false
+DotFrame.Parent = ScreenGui
+
+local UICornerDot = Instance.new("UICorner")
+UICornerDot.CornerRadius = UDim.new(1, 0)
+UICornerDot.Parent = DotFrame
+
+-- ───────────────────────────────
+-- СТАТУС ТЕКСТ (для дебага)
+-- ───────────────────────────────
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(0, 250, 0, 30)
+StatusLabel.Position = UDim2.new(0.5, -125, 0, 10)
+StatusLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+StatusLabel.BackgroundTransparency = 0.4
+StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+StatusLabel.Text = "СТАТУС: Загрузка..."
+StatusLabel.TextScaled = true
+StatusLabel.Font = Enum.Font.GothamBold
+StatusLabel.BorderSizePixel = 0
+StatusLabel.Parent = ScreenGui
+
+local UICornerStatus = Instance.new("UICorner")
+UICornerStatus.CornerRadius = UDim.new(0, 6)
+UICornerStatus.Parent = StatusLabel
+
+-- ───────────────────────────────
+-- КНОПКА ON/OFF (большая для телефона)
+-- ───────────────────────────────
+local BtnFrame = Instance.new("Frame")
+BtnFrame.Size = UDim2.new(0, 150, 0, 55)
+BtnFrame.Position = UDim2.new(0, 15, 0.5, -27)
+BtnFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+BtnFrame.BorderSizePixel = 0
+BtnFrame.Active = true
+BtnFrame.Draggable = true
+BtnFrame.Parent = ScreenGui
+
+local UICornerBtn = Instance.new("UICorner")
+UICornerBtn.CornerRadius = UDim.new(0, 12)
+UICornerBtn.Parent = BtnFrame
+
+local BtnStroke = Instance.new("UIStroke")
+BtnStroke.Color = Color3.fromRGB(255, 50, 50)
+BtnStroke.Thickness = 2
+BtnStroke.Parent = BtnFrame
+
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(1, 0, 1, 0)
+ToggleButton.BackgroundTransparency = 1
+ToggleButton.Text = "🎯 AIM OFF"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 70, 70)
+ToggleButton.TextScaled = true
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.Parent = BtnFrame
 
 -- ═══════════════════════════════
---         ФУНКЦИИ
+--         ЛОГИКА
 -- ═══════════════════════════════
 
-local function GetScreenCenter()
+local function GetCenter()
     local vp = Camera.ViewportSize
     return Vector2.new(vp.X / 2, vp.Y / 2)
 end
 
--- Главная функция поиска врага
 local function GetClosestEnemy()
-    local closestTarget = nil
-    local closestDist = Settings.FOVRadius  -- только внутри круга
-    local screenCenter = GetScreenCenter()
+    local bestTarget = nil
+    local bestDist = FOV_RADIUS
+    local center = GetCenter()
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
 
-        local char = player.Character
+        local char = plr.Character
         if not char then continue end
 
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then continue end
 
-        local head = char:FindFirstChild("Head")
-        if not head then continue end
+        local part = char:FindFirstChild(AIM_PART)
+            or char:FindFirstChild("HumanoidRootPart")
+        if not part then continue end
 
-        -- Переводим 3D -> 2D экран
-        local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+        local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
         if not onScreen then continue end
 
-        local pos2D = Vector2.new(screenPos.X, screenPos.Y)
-        local dist = (pos2D - screenCenter).Magnitude
+        local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
 
-        -- Только если ВНУТРИ круга
-        if dist < closestDist then
-            closestDist = dist
-            closestTarget = head
+        if dist < bestDist then
+            bestDist = dist
+            bestTarget = part
         end
     end
 
-    return closestTarget
+    return bestTarget
 end
 
--- Наведение камеры на цель
-local function AimAt(targetPart)
-    if not targetPart then return end
+-- Метод наведения камеры
+local function LookAtTarget(targetPart)
+    if not targetPart or not targetPart.Parent then return end
 
-    -- Получаем позицию головы
+    local camPos = Camera.CFrame.Position
     local targetPos = targetPart.Position
 
-    -- Направление от камеры к цели
-    local camPos = Camera.CFrame.Position
-    local direction = (targetPos - camPos).Unit
+    -- Вектор от камеры к цели
+    local lookVector = (targetPos - camPos).Unit
 
-    -- Новый CFrame камеры смотрит на цель
-    local targetCFrame = CFrame.new(camPos, camPos + direction)
+    -- Строим новый CFrame
+    local newCFrame = CFrame.new(camPos, camPos + lookVector)
 
-    -- Плавное перемещение
-    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, Settings.AimSmoothing)
+    -- Плавно применяем
+    Camera.CFrame = Camera.CFrame:Lerp(newCFrame, SMOOTHING)
 end
 
 -- ═══════════════════════════════
 --         TOGGLE
 -- ═══════════════════════════════
-ToggleBtn.MouseButton1Click:Connect(function()
-    Settings.AimbotEnabled = not Settings.AimbotEnabled
+ToggleButton.MouseButton1Click:Connect(function()
+    AimbotEnabled = not AimbotEnabled
 
-    if Settings.AimbotEnabled then
-        ToggleBtn.Text = "🎯 AIM: ON"
-        ToggleBtn.TextColor3 = Color3.fromRGB(60, 255, 100)
-        UIStroke.Color = Color3.fromRGB(60, 255, 100)
-        Frame.BackgroundColor3 = Color3.fromRGB(10, 28, 10)
-
-        FOVCircle.Visible = true
-        CenterDot.Visible = true
-        LineH.Visible = true
-        LineV.Visible = true
-        DebugText.Text = "AIM: ON | Зажми ПКМ"
-        DebugText.Color = Color3.fromRGB(60, 255, 100)
+    if AimbotEnabled then
+        -- Включено
+        ToggleButton.Text = "🎯 AIM ON"
+        ToggleButton.TextColor3 = Color3.fromRGB(50, 255, 90)
+        BtnStroke.Color = Color3.fromRGB(50, 255, 90)
+        BtnFrame.BackgroundColor3 = Color3.fromRGB(10, 30, 10)
+        CircleFrame.Visible = true
+        DotFrame.Visible = true
+        StatusLabel.Text = "✅ AIM ВКЛЮЧЁН"
+        StatusLabel.TextColor3 = Color3.fromRGB(50, 255, 90)
     else
-        ToggleBtn.Text = "🎯 AIM: OFF"
-        ToggleBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
-        UIStroke.Color = Color3.fromRGB(255, 60, 60)
-        Frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
-
-        FOVCircle.Visible = false
-        CenterDot.Visible = false
-        LineH.Visible = false
-        LineV.Visible = false
-        DebugText.Text = "AIM: OFF"
-        DebugText.Color = Color3.fromRGB(255, 80, 80)
+        -- Выключено
+        ToggleButton.Text = "🎯 AIM OFF"
+        ToggleButton.TextColor3 = Color3.fromRGB(255, 70, 70)
+        BtnStroke.Color = Color3.fromRGB(255, 50, 50)
+        BtnFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        UIStrokeCircle.Color = Color3.fromRGB(255, 50, 50)
+        CircleFrame.Visible = false
+        DotFrame.Visible = false
+        StatusLabel.Text = "❌ AIM ВЫКЛЮЧЕН"
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 70, 70)
     end
 end)
 
 -- ═══════════════════════════════
 --         ГЛАВНЫЙ ЦИКЛ
 -- ═══════════════════════════════
+StatusLabel.Text = "✅ Скрипт загружен!"
+
 RunService.RenderStepped:Connect(function()
-    local center = GetScreenCenter()
+    if not AimbotEnabled then return end
 
-    -- Позиция круга всегда по центру экрана
-    FOVCircle.Position = center
-    CenterDot.Position = center
+    local target = GetClosestEnemy()
 
-    -- Крестик по центру
-    local cs = 8
-    LineH.From = Vector2.new(center.X - cs, center.Y)
-    LineH.To   = Vector2.new(center.X + cs, center.Y)
-    LineV.From = Vector2.new(center.X, center.Y - cs)
-    LineV.To   = Vector2.new(center.X, center.Y + cs)
+    if target then
+        -- Цель найдена
+        UIStrokeCircle.Color = Color3.fromRGB(0, 255, 80)
+        StatusLabel.Text = "🔒 LOCKED: " .. (target.Parent and target.Parent.Name or "???")
+        StatusLabel.TextColor3 = Color3.fromRGB(0, 255, 80)
 
-    -- Если аим выключен - ничего не делаем
-    if not Settings.AimbotEnabled then return end
-
-    -- Зажать ПКМ чтобы аим работал
-    local rmb = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-
-    if rmb then
-        local target = GetClosestEnemy()
-
-        if target then
-            -- Цель найдена - круг зелёный
-            FOVCircle.Color = Color3.fromRGB(0, 255, 80)
-            FOVCircle.Thickness = 3
-            DebugText.Text = "🎯 LOCKED: " .. target.Parent.Name
-            DebugText.Color = Color3.fromRGB(0, 255, 80)
-
-            -- Наводим камеру
-            AimAt(target)
-        else
-            -- Нет цели в круге - красный
-            FOVCircle.Color = Color3.fromRGB(255, 60, 60)
-            FOVCircle.Thickness = 2
-            DebugText.Text = "AIM: ON | Нет цели в круге"
-            DebugText.Color = Color3.fromRGB(255, 200, 0)
-        end
+        -- НАВОДИМ КАМЕРУ
+        LookAtTarget(target)
     else
-        -- ПКМ не зажат
-        FOVCircle.Color = Color3.fromRGB(255, 60, 60)
-        FOVCircle.Thickness = 2
-        DebugText.Text = "AIM: ON | Зажми ПКМ"
-        DebugText.Color = Color3.fromRGB(60, 255, 100)
+        -- Нет цели
+        UIStrokeCircle.Color = Color3.fromRGB(255, 50, 50)
+        StatusLabel.Text = "🔍 Поиск цели..."
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 0)
     end
 end)
 
-print("✅ [DeltaX] Rivals Aimbot загружен!")
-print("📌 Нажми кнопку чтобы включить")
-print("📌 Зажми ПКМ для активации аима")
+print("[DeltaX] Загружено! Нажми кнопку AIM OFF чтобы включить")
